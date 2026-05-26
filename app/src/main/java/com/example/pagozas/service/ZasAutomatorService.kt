@@ -152,9 +152,16 @@ class ZasAutomatorService : AccessibilityService() {
     // ─── PASO 1: Hacer clic en "Ingresar" ────────────────────────────────────
 
     private fun handleIngresar(root: AccessibilityNodeInfo) {
-        showStatus("Buscando botón Ingresar...")
+        // Esperar a que el QR de la pantalla de login sea visible antes de hacer clic
+        if (!isLoginQrVisible(root)) {
+            showStatus("Esperando que cargue el QR...")
+            scheduleRetry(800L)
+            return
+        }
+
+        showStatus("QR cargado — buscando botón Ingresar...")
         if (clickByLabels(root, "Ingresar", "Entrar", "Login", "Acceder")) {
-            advance(State.FILLING_PIN, 1000L, "Clic en Ingresar ✓ — esperando PIN...")
+            advance(State.FILLING_PIN, 1200L, "Clic en Ingresar ✓ — esperando PIN...")
         } else {
             // Si ya hay un campo de PIN visible, pasar directo
             val fields = mutableListOf<AccessibilityNodeInfo>()
@@ -165,6 +172,20 @@ class ZasAutomatorService : AccessibilityService() {
                 showStatus("Esperando pantalla de inicio...")
                 scheduleRetry(800L)
             }
+        }
+    }
+
+    /**
+     * True si hay una imagen (QR) visible en la zona central de la pantalla de login.
+     * El QR de ZA$ aparece en la parte central-superior antes de que el botón sea útil.
+     */
+    private fun isLoginQrVisible(root: AccessibilityNodeInfo): Boolean {
+        val h = resources.displayMetrics.heightPixels
+        val images = mutableListOf<AccessibilityNodeInfo>()
+        collectByClass(root, "android.widget.ImageView", images)
+        return images.any {
+            val b = getBounds(it)
+            b.top > h * 0.10f && b.bottom < h * 0.80f && b.width() > 60 && b.height() > 60
         }
     }
 
@@ -215,13 +236,14 @@ class ZasAutomatorService : AccessibilityService() {
     // ─── PASO 3: Ir a Movimientos ─────────────────────────────────────────────
 
     private fun handleNavToMovimientos(root: AccessibilityNodeInfo) {
-        showStatus("Buscando sección de movimientos...")
+        showStatus("Buscando ícono ≡ de movimientos...")
 
+        // 1. Intentar por label/contentDesc directo
         val found = clickByLabels(root,
             "Movimientos", "Ver movimientos", "Historial",
             "Ver pendientes", "Cobro QR ZAS", "Pagos", "Cobros"
         ) || clickByContentDesc(root,
-            "Movimientos", "Lista", "Menu", "Menú", "Historial"
+            "Movimientos", "Lista", "Historial"
         )
 
         if (found) {
@@ -229,23 +251,49 @@ class ZasAutomatorService : AccessibilityService() {
             return
         }
 
+        // 2. Estamos en el home (hay nodo "Saldo") → buscar el botón ≡ en la
+        //    zona media de la tarjeta de saldo (NO los 3 puntos de arriba)
         val saldoNode = findLabel(root, "Saldo")
         if (saldoNode != null) {
-            showStatus("En pantalla principal — buscando ícono de menú...")
-            clickTopBarMenuButton(root)
-            scheduleRetry(1200L)
+            if (clickSaldoCardListIcon(root)) {
+                advance(State.EXTRACTING, 1500L, "Clic en ≡ — abriendo movimientos...")
+            } else {
+                showStatus("Buscando ≡ en tarjeta de saldo...")
+                scheduleRetry(1000L)
+            }
         } else {
             showStatus("Esperando pantalla principal...")
             scheduleRetry(1000L)
         }
     }
 
-    private fun clickTopBarMenuButton(root: AccessibilityNodeInfo) {
+    /**
+     * Hace clic en el botón ≡ (lista/movimientos) que está DENTRO de la tarjeta
+     * de saldo, en la zona media de pantalla — izquierda del centro.
+     * Evita los 3 puntos (⋮) que están en la barra superior.
+     */
+    private fun clickSaldoCardListIcon(root: AccessibilityNodeInfo): Boolean {
+        val h = resources.displayMetrics.heightPixels
+        val w = resources.displayMetrics.widthPixels
+
         val clickables = mutableListOf<AccessibilityNodeInfo>()
         findClickable(root, clickables)
-        val displayHeight = resources.displayMetrics.heightPixels
-        val topBar = clickables.filter { getBounds(it).top < displayHeight * 0.2f }
-        if (topBar.isNotEmpty()) performClick(topBar.last())
+
+        // El ≡ está en la franja vertical 42-73 % de pantalla, mitad izquierda
+        val candidates = clickables
+            .filter { n ->
+                val b = getBounds(n)
+                b.top  >  h * 0.42f &&
+                b.bottom < h * 0.74f &&
+                b.centerX() < w * 0.55f
+            }
+            .sortedBy { getBounds(it).top }
+
+        if (candidates.isNotEmpty()) {
+            Log.d(TAG, "clickSaldoCardListIcon: ${candidates.size} candidatos, tomando el primero")
+            return performClick(candidates.first())
+        }
+        return false
     }
 
     // ─── PASO 4: Extraer datos y hacer scroll ─────────────────────────────────
@@ -455,6 +503,13 @@ class ZasAutomatorService : AccessibilityService() {
         if (node == null) return
         if (node.isClickable) out.add(node)
         for (i in 0 until node.childCount) findClickable(node.getChild(i), out)
+    }
+
+    /** Recoge todos los nodos cuyo className contiene [cls]. */
+    private fun collectByClass(n: AccessibilityNodeInfo?, cls: String, out: MutableList<AccessibilityNodeInfo>) {
+        if (n == null) return
+        if (safe(n.className).contains(cls)) out.add(n)
+        for (i in 0 until n.childCount) collectByClass(n.getChild(i), cls, out)
     }
 
     private fun findScrollable(n: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
