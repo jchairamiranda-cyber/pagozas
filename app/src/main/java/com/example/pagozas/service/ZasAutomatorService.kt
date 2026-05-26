@@ -174,20 +174,15 @@ class ZasAutomatorService : AccessibilityService() {
         }
     }
 
-    /** True si hay un ImageView de tamaño QR visible en la zona central de la pantalla. */
+    /**
+     * True si el QR de la pantalla de login ya cargó.
+     * Lo detecta por los textos que aparecen junto al QR, no por la imagen en sí.
+     */
     private fun isLoginQrVisible(root: AccessibilityNodeInfo): Boolean {
-        val h = resources.displayMetrics.heightPixels
-        val w = resources.displayMetrics.widthPixels
-        val images = mutableListOf<AccessibilityNodeInfo>()
-        collectByClass(root, "android.widget.ImageView", images)
-        return images.any {
-            val b = getBounds(it)
-            // El QR ocupa una zona razonable del centro de pantalla
-            b.top  > h * 0.08f  &&
-            b.bottom < h * 0.75f &&
-            b.width()  > w * 0.15f &&
-            b.height() > w * 0.15f
-        }
+        return findLabel(root, "Pagar a") != null
+            || findLabel(root, "Vencimiento del QR") != null
+            || findLabel(root, "Cuenta que recibirá") != null
+            || findLabel(root, "a la cuenta") != null
     }
 
     // ─── PASO 2: Rellenar PIN ─────────────────────────────────────────────────
