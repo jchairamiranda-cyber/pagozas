@@ -49,9 +49,9 @@ class ZasAutomatorService : AccessibilityService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(Dispatchers.IO)
 
-    // Solo referencias EVTA seguidas de números (ej: EVTA12345678)
-    private val PAT_CODE  = Pattern.compile("EVTA\\d+")
-    private val PAT_MONTO = Pattern.compile("\\+?\\s*Bs\\.?\\s*[\\d.,]+")
+    // Referencias EVT seguidas de letras y/o números (EVTA63825173, EVT6864GJFB63, etc.)
+    private val PAT_CODE  = Pattern.compile("EVT[A-Z0-9]{4,}")
+    private val PAT_MONTO = Pattern.compile("Bs\\.?\\s*([\\d]+[.,][\\d]{2})")
 
     private var nextActionAtMs = 0L
     private var pinAttempts = 0
@@ -315,32 +315,33 @@ class ZasAutomatorService : AccessibilityService() {
         val lines = mutableListOf<String>()
         collectLines(root, lines)
 
-        var cantidadGuardada = 0
+        var guardados = 0
         var i = 0
         while (i < lines.size) {
             val mc = PAT_CODE.matcher(lines[i])
             if (mc.find()) {
                 val codigo = mc.group()
-                // Buscar el monto en la misma línea o en las siguientes 6
+                // Buscar "Bs X.XX" en la misma línea o hasta 6 líneas adelante
                 var monto: String? = null
                 for (j in i until minOf(i + 7, lines.size)) {
-                    // El monto puede estar en la misma línea que el código
                     val mp = PAT_MONTO.matcher(lines[j])
                     if (mp.find()) {
-                        monto = mp.group().trim()
-                            .replace("\\s+".toRegex(), "")  // quitar espacios internos
+                        // grupo 1 = solo los dígitos, agregamos "Bs" adelante
+                        monto = "Bs${mp.group(1)}"
                         break
                     }
                 }
                 if (monto != null) {
-                    Log.d(TAG, "Encontrado: $codigo → $monto")
+                    Log.d(TAG, "Extraído: $codigo → $monto")
                     guardarEnBD(codigo, monto)
-                    cantidadGuardada++
+                    guardados++
+                } else {
+                    Log.w(TAG, "Sin monto para: $codigo (líneas ${i} a ${minOf(i+6, lines.size-1)})")
                 }
             }
             i++
         }
-        return cantidadGuardada
+        return guardados
     }
 
     private fun collectLines(node: AccessibilityNodeInfo?, out: MutableList<String>) {
