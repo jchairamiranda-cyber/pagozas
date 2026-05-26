@@ -53,8 +53,6 @@ class ZasAutomatorService : AccessibilityService() {
     private val PAT_CODE  = Pattern.compile("EVTA\\d+")
     private val PAT_MONTO = Pattern.compile("\\+?\\s*Bs\\.?\\s*[\\d.,]+")
 
-    private var lastScrollTime = 0L
-    private val SCROLL_DELAY_MS = 4000L
     private var nextActionAtMs = 0L
     private var pinAttempts = 0
 
@@ -280,7 +278,7 @@ class ZasAutomatorService : AccessibilityService() {
         return false
     }
 
-    // ─── PASO 4: Extraer datos y hacer scroll ─────────────────────────────────
+    // ─── PASO 4: Escanear → guardar → actualizar → repetir ───────────────────
 
     private fun handleExtractAndScroll(root: AccessibilityNodeInfo) {
         val enMovimientos = findLabel(root, "Movimientos") != null ||
@@ -293,21 +291,22 @@ class ZasAutomatorService : AccessibilityService() {
             return
         }
 
-        val antes = System.currentTimeMillis()
-        val guardados = extraerDatos(root)
-        if (guardados > 0) {
-            showStatus("✓ $guardados pago(s) registrado(s)")
+        // 1. Escanear primero — extraer referencias EVTA + monto
+        val nuevas = extraerDatos(root)
+
+        // 2. Mostrar resultado del escaneo
+        if (nuevas > 0) {
+            showStatus("✓ $nuevas nueva(s) referencia(s) guardada(s)")
         } else {
-            showStatus("Escaneando pagos en pantalla...")
+            showStatus("Sin nuevas referencias — actualizando...")
         }
 
-        val currentTime = System.currentTimeMillis()
-        if (currentTime - lastScrollTime > SCROLL_DELAY_MS) {
-            showStatus("Actualizando lista de pagos...")
-            hacerSwipeParaActualizar()
-            lastScrollTime = currentTime
-            scheduleRetry(SCROLL_DELAY_MS)
-        }
+        // 3. Recién después de escanear → hacer swipe para actualizar la lista
+        hacerSwipeParaActualizar()
+
+        // 4. Esperar 4s a que cargue la lista actualizada y volver a escanear
+        nextActionAtMs = System.currentTimeMillis() + 4000L
+        scheduleRetry(4000L)
     }
 
     // ─── Extracción de datos ─────────────────────────────────────────────────
