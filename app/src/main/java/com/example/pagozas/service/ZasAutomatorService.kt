@@ -88,7 +88,7 @@ class ZasAutomatorService : AccessibilityService() {
         state = State.CLICKING_INGRESAR
         showStatus("Iniciando... abriendo ZA\$")
         launchZas()
-        scheduleRetry(1500L)
+        scheduleRetry(2000L) // 2 segundos para que cargue la pantalla antes de actuar
     }
 
     private fun launchZas() {
@@ -152,40 +152,17 @@ class ZasAutomatorService : AccessibilityService() {
     // ─── PASO 1: Hacer clic en "Ingresar" ────────────────────────────────────
 
     private fun handleIngresar(root: AccessibilityNodeInfo) {
-        // Esperar a que el QR de la pantalla de login sea visible antes de hacer clic
-        if (!isLoginQrVisible(root)) {
-            showStatus("Esperando que cargue el QR...")
-            scheduleRetry(800L)
-            return
-        }
-
-        showStatus("QR cargado — buscando botón Ingresar...")
+        showStatus("Esperando pantalla de inicio...")
         if (clickByLabels(root, "Ingresar", "Entrar", "Login", "Acceder")) {
             advance(State.FILLING_PIN, 1200L, "Clic en Ingresar ✓ — esperando PIN...")
         } else {
-            // Si ya hay un campo de PIN visible, pasar directo
             val fields = mutableListOf<AccessibilityNodeInfo>()
             findEditTexts(root, fields)
             if (fields.isNotEmpty()) {
                 advance(State.FILLING_PIN, 400L, "Pantalla de PIN detectada")
             } else {
-                showStatus("Esperando pantalla de inicio...")
                 scheduleRetry(800L)
             }
-        }
-    }
-
-    /**
-     * True si hay una imagen (QR) visible en la zona central de la pantalla de login.
-     * El QR de ZA$ aparece en la parte central-superior antes de que el botón sea útil.
-     */
-    private fun isLoginQrVisible(root: AccessibilityNodeInfo): Boolean {
-        val h = resources.displayMetrics.heightPixels
-        val images = mutableListOf<AccessibilityNodeInfo>()
-        collectByClass(root, "android.widget.ImageView", images)
-        return images.any {
-            val b = getBounds(it)
-            b.top > h * 0.10f && b.bottom < h * 0.80f && b.width() > 60 && b.height() > 60
         }
     }
 
