@@ -88,7 +88,7 @@ class ZasAutomatorService : AccessibilityService() {
         state = State.CLICKING_INGRESAR
         showStatus("Iniciando... abriendo ZA\$")
         launchZas()
-        scheduleRetry(2000L) // 2 segundos para que cargue la pantalla antes de actuar
+        scheduleRetry(1500L)
     }
 
     private fun launchZas() {
@@ -152,17 +152,41 @@ class ZasAutomatorService : AccessibilityService() {
     // ─── PASO 1: Hacer clic en "Ingresar" ────────────────────────────────────
 
     private fun handleIngresar(root: AccessibilityNodeInfo) {
-        showStatus("Esperando pantalla de inicio...")
+        // Primero verificar que el QR ya se cargó en pantalla
+        if (!isLoginQrVisible(root)) {
+            showStatus("Esperando que cargue el QR...")
+            scheduleRetry(800L)
+            return
+        }
+        // QR visible → ahora sí presionar el botón Ingresar que está debajo
+        showStatus("QR cargado — presionando Ingresar...")
         if (clickByLabels(root, "Ingresar", "Entrar", "Login", "Acceder")) {
-            advance(State.FILLING_PIN, 1200L, "Clic en Ingresar ✓ — esperando PIN...")
+            advance(State.FILLING_PIN, 1200L, "Ingresar ✓ — esperando PIN...")
         } else {
             val fields = mutableListOf<AccessibilityNodeInfo>()
             findEditTexts(root, fields)
             if (fields.isNotEmpty()) {
                 advance(State.FILLING_PIN, 400L, "Pantalla de PIN detectada")
             } else {
+                showStatus("Buscando botón Ingresar...")
                 scheduleRetry(800L)
             }
+        }
+    }
+
+    /** True si hay un ImageView de tamaño QR visible en la zona central de la pantalla. */
+    private fun isLoginQrVisible(root: AccessibilityNodeInfo): Boolean {
+        val h = resources.displayMetrics.heightPixels
+        val w = resources.displayMetrics.widthPixels
+        val images = mutableListOf<AccessibilityNodeInfo>()
+        collectByClass(root, "android.widget.ImageView", images)
+        return images.any {
+            val b = getBounds(it)
+            // El QR ocupa una zona razonable del centro de pantalla
+            b.top  > h * 0.08f  &&
+            b.bottom < h * 0.75f &&
+            b.width()  > w * 0.15f &&
+            b.height() > w * 0.15f
         }
     }
 
@@ -245,31 +269,33 @@ class ZasAutomatorService : AccessibilityService() {
     }
 
     /**
-     * Hace clic en el botón ≡ (lista/movimientos) que está DENTRO de la tarjeta
-     * de saldo, en la zona media de pantalla — izquierda del centro.
-     * Evita los 3 puntos (⋮) que están en la barra superior.
+     * Hace clic en el ≡ (3 barras en círculo) que está debajo del botón + verde
+     * de "Ingresos del día", dentro de la tarjeta de saldo.
      */
     private fun clickSaldoCardListIcon(root: AccessibilityNodeInfo): Boolean {
         val h = resources.displayMetrics.heightPixels
         val w = resources.displayMetrics.widthPixels
 
+        // Buscar el + verde (botón de ingresos) para saber desde qué Y empezar
+        val plusNode = findLabel(root, "Ingresos del día")
+            ?: findLabel(root, "Ingresos")
+        val minY = if (plusNode != null) getBounds(plusNode).bottom else (h * 0.50f).toInt()
+
         val clickables = mutableListOf<AccessibilityNodeInfo>()
         findClickable(root, clickables)
 
-        // El ≡ está en la franja vertical 42-73 % de pantalla, mitad izquierda
+        // El ≡ está justo debajo del + verde, en la mitad izquierda de pantalla
         val candidates = clickables
             .filter { n ->
                 val b = getBounds(n)
-                b.top  >  h * 0.42f &&
-                b.bottom < h * 0.74f &&
+                b.top    >= minY       &&
+                b.bottom <= h * 0.80f  &&
                 b.centerX() < w * 0.55f
             }
             .sortedBy { getBounds(it).top }
 
-        if (candidates.isNotEmpty()) {
-            Log.d(TAG, "clickSaldoCardListIcon: ${candidates.size} candidatos, tomando el primero")
-            return performClick(candidates.first())
-        }
+        Log.d(TAG, "clickSaldoCardListIcon: ${candidates.size} candidatos debajo de Y=$minY")
+        if (candidates.isNotEmpty()) return performClick(candidates.first())
         return false
     }
 
