@@ -41,6 +41,7 @@ fun PagoZasApp() {
     val context = LocalContext.current
     val db = PagoZasDatabase.getDatabase(context)
     val pagosList by db.pagoDao().getAllPagos().collectAsState(initial = emptyList())
+    var isRunning by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(com.example.pagozas.service.ZasAutomatorService.isRunning) }
 
     Scaffold(
         topBar = {
@@ -64,9 +65,29 @@ fun PagoZasApp() {
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp)
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
-                Text("Activar Servicio de Accesibilidad")
+                Text("1. Activar Servicio de Accesibilidad")
+            }
+
+            Button(
+                onClick = {
+                    isRunning = !isRunning
+                    com.example.pagozas.service.ZasAutomatorService.isRunning = isRunning
+                    if (isRunning) {
+                        android.widget.Toast.makeText(context, "Automatización INICIADA", android.widget.Toast.LENGTH_SHORT).show()
+                    } else {
+                        android.widget.Toast.makeText(context, "Automatización PAUSADA", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isRunning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Text(if (isRunning) "2. DETENER Automatización" else "2. INICIAR Automatización")
             }
 
             LazyColumn(

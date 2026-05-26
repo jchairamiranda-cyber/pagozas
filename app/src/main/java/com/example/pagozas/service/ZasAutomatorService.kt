@@ -18,31 +18,37 @@ import java.util.Locale
 
 class ZasAutomatorService : AccessibilityService() {
 
+    companion object {
+        var isRunning = false
+    }
+
     private val TAG = "ZasAutomator"
     private val scope = CoroutineScope(Dispatchers.IO)
     private var lastScrollTime = 0L
     private val SCROLL_DELAY_MS = 3000L
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (!isRunning) return
+        
         val rootNode = rootInActiveWindow ?: return
         
         // Asumiendo que el paquete de la app es bec.vdb.direct o similar. Ajustar si es diferente.
-        // Si no se sabe el paquete, se puede quitar esta validacion inicialmente para pruebas, 
-        // pero es mejor ponerla para no afectar otras apps.
         val packageName = event?.packageName?.toString() ?: ""
-        Log.d(TAG, "Evento en paquete: $packageName")
+        // No filtramos por paquete para facilitar el debug, pero se puede hacer if(packageName == "bec.vdb.direct")
 
         // Paso 1: Pantalla de inicio (Buscar "Ingresar")
+        // En tu imagen se ve "Ingresar ->]". Buscamos nodos que contengan "Ingresar"
         val btnIngresar = rootNode.findAccessibilityNodeInfosByText("Ingresar")
         if (btnIngresar.isNotEmpty()) {
             val node = btnIngresar[0]
+            Log.d(TAG, "Encontrado botón Ingresar")
             if (node.isClickable) {
-                Log.d(TAG, "Haciendo clic en Ingresar")
                 node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                mostrarToast("Haciendo clic en Ingresar")
                 return
             } else {
-                // Si el texto "Ingresar" no es clickable directamente, buscar al padre
                 node.parent?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                mostrarToast("Haciendo clic en Padre de Ingresar")
                 return
             }
         }
@@ -170,10 +176,18 @@ class ZasAutomatorService : AccessibilityService() {
             .build()
         
         Log.d(TAG, "Ejecutando Swipe para actualizar...")
+        mostrarToast("Actualizando pagos (Swipe)")
         dispatchGesture(gesture, null, null)
+    }
+
+    private fun mostrarToast(mensaje: String) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            android.widget.Toast.makeText(applicationContext, mensaje, android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
     override fun onInterrupt() {
         Log.e(TAG, "Servicio Interrumpido")
+        mostrarToast("Servicio Interrumpido")
     }
 }
