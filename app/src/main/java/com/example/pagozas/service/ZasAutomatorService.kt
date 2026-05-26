@@ -49,8 +49,9 @@ class ZasAutomatorService : AccessibilityService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(Dispatchers.IO)
 
-    private val PAT_CODE  = Pattern.compile("[A-Z]{2,8}\\d{4,}")
-    private val PAT_MONTO = Pattern.compile("\\+?\\s*Bs\\s*[\\d.,]+")
+    // Solo referencias EVTA seguidas de números (ej: EVTA12345678)
+    private val PAT_CODE  = Pattern.compile("EVTA\\d+")
+    private val PAT_MONTO = Pattern.compile("\\+?\\s*Bs\\.?\\s*[\\d.,]+")
 
     private var lastScrollTime = 0L
     private val SCROLL_DELAY_MS = 4000L
@@ -315,28 +316,30 @@ class ZasAutomatorService : AccessibilityService() {
         val lines = mutableListOf<String>()
         collectLines(root, lines)
 
-        var codigoEncontrado: String? = null
         var cantidadGuardada = 0
-
-        for (i in lines.indices) {
-            val line = lines[i]
-            val mc = PAT_CODE.matcher(line)
+        var i = 0
+        while (i < lines.size) {
+            val mc = PAT_CODE.matcher(lines[i])
             if (mc.find()) {
-                codigoEncontrado = mc.group()
-                continue
-            }
-            if (codigoEncontrado != null) {
-                for (j in i until minOf(i + 5, lines.size)) {
+                val codigo = mc.group()
+                // Buscar el monto en la misma línea o en las siguientes 6
+                var monto: String? = null
+                for (j in i until minOf(i + 7, lines.size)) {
+                    // El monto puede estar en la misma línea que el código
                     val mp = PAT_MONTO.matcher(lines[j])
                     if (mp.find()) {
-                        val monto = mp.group().trim()
-                        guardarEnBD(codigoEncontrado!!, monto)
-                        cantidadGuardada++
-                        codigoEncontrado = null
+                        monto = mp.group().trim()
+                            .replace("\\s+".toRegex(), "")  // quitar espacios internos
                         break
                     }
                 }
+                if (monto != null) {
+                    Log.d(TAG, "Encontrado: $codigo → $monto")
+                    guardarEnBD(codigo, monto)
+                    cantidadGuardada++
+                }
             }
+            i++
         }
         return cantidadGuardada
     }
