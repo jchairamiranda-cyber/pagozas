@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -40,7 +41,6 @@ class ZasAutomatorService : AccessibilityService() {
         fun getInstance(): ZasAutomatorService? = instance
     }
 
-    // Máquina de estados
     private enum class State {
         IDLE, CLICKING_INGRESAR, FILLING_PIN, NAVIGATING_TO_MOVIMIENTOS, EXTRACTING
     }
@@ -49,19 +49,18 @@ class ZasAutomatorService : AccessibilityService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(Dispatchers.IO)
 
-    // Regex robusta para EVTA + 8 dígitos (según tus imágenes)
-    private val PAT_CODE = Pattern.compile("[A-Z]{2,8}\\d{4,}")
+    private val PAT_CODE  = Pattern.compile("[A-Z]{2,8}\\d{4,}")
     private val PAT_MONTO = Pattern.compile("\\+?\\s*Bs\\s*[\\d.,]+")
 
     private var lastScrollTime = 0L
     private val SCROLL_DELAY_MS = 4000L
     private var nextActionAtMs = 0L
+    private var pinAttempts = 0
 
-    // Popup flotante
     private var windowManager: WindowManager? = null
     private var statusPopup: TextView? = null
     private val hidePopupRunnable = Runnable { hidePopup() }
-    private val retryRunnable = Runnable { retryProcess() }
+    private val retryRunnable    = Runnable { retryProcess() }
 
     // ─── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -79,14 +78,13 @@ class ZasAutomatorService : AccessibilityService() {
         return super.onUnbind(intent)
     }
 
-    override fun onInterrupt() {
-        showStatus("Servicio interrumpido")
-    }
+    override fun onInterrupt() { showStatus("Servicio interrumpido") }
 
     // ─── Arrancar automatización ──────────────────────────────────────────────
 
     fun startAutomation() {
         if (!isRunning) return
+        pinAttempts = 0
         state = State.CLICKING_INGRESAR
         showStatus("Iniciando... abriendo ZA\$")
         launchZas()
@@ -109,14 +107,13 @@ class ZasAutomatorService : AccessibilityService() {
         if (!isRunning) return
         val pkg = event?.packageName?.toString() ?: ""
         if (pkg != ZAS_PACKAGE) return
-
         val root = rootInActiveWindow ?: return
         val type = event?.eventType ?: return
-
-        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED   ||
             type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
-            type == AccessibilityEvent.TYPE_VIEW_CLICKED ||
-            type == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+            type == AccessibilityEvent.TYPE_VIEW_CLICKED           ||
+            type == AccessibilityEvent.TYPE_VIEW_SCROLLED          ||
+            type == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
             process(root)
         }
     }
@@ -126,20 +123,18 @@ class ZasAutomatorService : AccessibilityService() {
     private fun process(root: AccessibilityNodeInfo) {
         if (!isRunning) return
         if (System.currentTimeMillis() < nextActionAtMs) return
-
         when (state) {
-            State.CLICKING_INGRESAR -> handleIngresar(root)
-            State.FILLING_PIN       -> handlePin(root)
-            State.NAVIGATING_TO_MOVIMIENTOS -> handleNavToMovimientos(root)
-            State.EXTRACTING        -> handleExtractAndScroll(root)
-            State.IDLE              -> {}
+            State.CLICKING_INGRESAR          -> handleIngresar(root)
+            State.FILLING_PIN                -> handlePin(root)
+            State.NAVIGATING_TO_MOVIMIENTOS  -> handleNavToMovimientos(root)
+            State.EXTRACTING                 -> handleExtractAndScroll(root)
+            State.IDLE                       -> {}
         }
     }
 
     private fun retryProcess() {
         if (state == State.IDLE) return
-        val root = rootInActiveWindow ?: return
-        process(root)
+        process(rootInActiveWindow ?: return)
     }
 
     private fun advance(newState: State, delayMs: Long, status: String) {
@@ -157,92 +152,105 @@ class ZasAutomatorService : AccessibilityService() {
     // ─── PASO 1: Hacer clic en "Ingresar" ────────────────────────────────────
 
     private fun handleIngresar(root: AccessibilityNodeInfo) {
-        if (clickByLabels(root, "Ingresar")) {
-            advance(State.FILLING_PIN, 1000L, "Ingresado, esperando PIN...")
+        showStatus("Buscando botón Ingresar...")
+        if (clickByLabels(root, "Ingresar", "Entrar", "Login", "Acceder")) {
+            advance(State.FILLING_PIN, 1000L, "Clic en Ingresar ✓ — esperando PIN...")
         } else {
-            showStatus("Buscando botón Ingresar...")
-            scheduleRetry(800L)
+            // Si ya hay un campo de PIN visible, pasar directo
+            val fields = mutableListOf<AccessibilityNodeInfo>()
+            findEditTexts(root, fields)
+            if (fields.isNotEmpty()) {
+                advance(State.FILLING_PIN, 400L, "Pantalla de PIN detectada")
+            } else {
+                showStatus("Esperando pantalla de inicio...")
+                scheduleRetry(800L)
+            }
         }
     }
 
-    // ─── PASO 2: Rellenar PIN 6880 ────────────────────────────────────────────
+    // ─── PASO 2: Rellenar PIN ─────────────────────────────────────────────────
 
     private fun handlePin(root: AccessibilityNodeInfo) {
-        // Verificar si ya pasamos la pantalla del PIN (aparece "Continuar" cuando hay PIN)
         val continuar = findLabel(root, "Continuar")
+            ?: findLabel(root, "Aceptar")
+            ?: findLabel(root, "OK")
+
         if (continuar == null) {
-            showStatus("Esperando pantalla de PIN...")
+            showStatus("Esperando pantalla de PIN... (intento $pinAttempts)")
+            pinAttempts++
             scheduleRetry(800L)
             return
         }
 
-        // Buscar campos de texto (EditText)
         val editTexts = mutableListOf<AccessibilityNodeInfo>()
         findEditTexts(root, editTexts)
 
         val pin = listOf("6", "8", "8", "0")
         if (editTexts.size >= 4) {
-            showStatus("Ingresando PIN: 6880")
+            showStatus("Ingresando PIN...")
             for (i in 0 until 4) {
                 val args = Bundle()
                 args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pin[i])
                 editTexts[i].performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                Thread.sleep(80)
             }
             Thread.sleep(300)
             performClick(continuar)
-            advance(State.NAVIGATING_TO_MOVIMIENTOS, 2000L, "PIN ingresado, navegando...")
+            advance(State.NAVIGATING_TO_MOVIMIENTOS, 2000L, "PIN ingresado ✓ — navegando al menú...")
+        } else if (editTexts.size == 1) {
+            // Campo único de PIN
+            showStatus("Ingresando PIN en campo único...")
+            val args = Bundle()
+            args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "6880")
+            editTexts[0].performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            Thread.sleep(300)
+            performClick(continuar)
+            advance(State.NAVIGATING_TO_MOVIMIENTOS, 2000L, "PIN ingresado ✓ — navegando al menú...")
         } else {
-            // Intentar por click individual en cada dígito del teclado numérico
-            showStatus("Buscando campos de PIN (${editTexts.size} encontrados)...")
+            showStatus("Buscando campos PIN (${editTexts.size} encontrados)...")
             scheduleRetry(800L)
         }
     }
 
-    // ─── PASO 3: Ir a Movimientos (ícono de lista / tres rayas) ──────────────
+    // ─── PASO 3: Ir a Movimientos ─────────────────────────────────────────────
 
     private fun handleNavToMovimientos(root: AccessibilityNodeInfo) {
-        // La pantalla principal muestra "Saldo" y botones. Buscamos el botón de lista/movimientos.
-        // Según tus imágenes, hay un ícono de lista (≡) cerca de "Ingresos del día"
+        showStatus("Buscando sección de movimientos...")
+
         val found = clickByLabels(root,
             "Movimientos", "Ver movimientos", "Historial",
-            "Ver pendientes", "Cobro QR ZAS", "Pagos"
+            "Ver pendientes", "Cobro QR ZAS", "Pagos", "Cobros"
         ) || clickByContentDesc(root,
             "Movimientos", "Lista", "Menu", "Menú", "Historial"
         )
 
         if (found) {
             advance(State.EXTRACTING, 1500L, "Abriendo movimientos...")
+            return
+        }
+
+        val saldoNode = findLabel(root, "Saldo")
+        if (saldoNode != null) {
+            showStatus("En pantalla principal — buscando ícono de menú...")
+            clickTopBarMenuButton(root)
+            scheduleRetry(1200L)
         } else {
-            // Si vemos "Saldo" ya estamos en el home, intentar el ícono de las 3 rayas
-            val saldoNode = findLabel(root, "Saldo")
-            if (saldoNode != null) {
-                // Buscar el primer botón clickable en la parte superior derecha
-                clickTopBarMenuButton(root)
-                showStatus("Buscando ícono de movimientos...")
-                scheduleRetry(1200L)
-            } else {
-                showStatus("Esperando pantalla principal...")
-                scheduleRetry(1000L)
-            }
+            showStatus("Esperando pantalla principal...")
+            scheduleRetry(1000L)
         }
     }
 
     private fun clickTopBarMenuButton(root: AccessibilityNodeInfo) {
-        // Buscar el botón de menú (≡) que está en la barra superior
         val clickables = mutableListOf<AccessibilityNodeInfo>()
         findClickable(root, clickables)
         val displayHeight = resources.displayMetrics.heightPixels
         val topBar = clickables.filter { getBounds(it).top < displayHeight * 0.2f }
-        // Tomar el último elemento de la barra superior (generalmente el menú está a la derecha)
-        if (topBar.isNotEmpty()) {
-            performClick(topBar.last())
-        }
+        if (topBar.isNotEmpty()) performClick(topBar.last())
     }
 
     // ─── PASO 4: Extraer datos y hacer scroll ─────────────────────────────────
 
     private fun handleExtractAndScroll(root: AccessibilityNodeInfo) {
-        // Verificamos que estamos en la pantalla de movimientos
         val enMovimientos = findLabel(root, "Movimientos") != null ||
                             findLabel(root, "COBRO QR ZAS") != null ||
                             findLabel(root, "Cobro QR ZAS") != null
@@ -253,13 +261,17 @@ class ZasAutomatorService : AccessibilityService() {
             return
         }
 
-        // Extraer todos los datos visibles
-        extraerDatos(root)
+        val antes = System.currentTimeMillis()
+        val guardados = extraerDatos(root)
+        if (guardados > 0) {
+            showStatus("✓ $guardados pago(s) registrado(s)")
+        } else {
+            showStatus("Escaneando pagos en pantalla...")
+        }
 
-        // Hacer scroll para actualizar
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastScrollTime > SCROLL_DELAY_MS) {
-            showStatus("Actualizando pagos...")
+            showStatus("Actualizando lista de pagos...")
             hacerSwipeParaActualizar()
             lastScrollTime = currentTime
             scheduleRetry(SCROLL_DELAY_MS)
@@ -268,7 +280,7 @@ class ZasAutomatorService : AccessibilityService() {
 
     // ─── Extracción de datos ─────────────────────────────────────────────────
 
-    private fun extraerDatos(root: AccessibilityNodeInfo) {
+    private fun extraerDatos(root: AccessibilityNodeInfo): Int {
         val lines = mutableListOf<String>()
         collectLines(root, lines)
 
@@ -283,7 +295,6 @@ class ZasAutomatorService : AccessibilityService() {
                 continue
             }
             if (codigoEncontrado != null) {
-                // Buscar monto en las siguientes líneas
                 for (j in i until minOf(i + 5, lines.size)) {
                     val mp = PAT_MONTO.matcher(lines[j])
                     if (mp.find()) {
@@ -296,10 +307,7 @@ class ZasAutomatorService : AccessibilityService() {
                 }
             }
         }
-
-        if (cantidadGuardada > 0) {
-            showStatus("✓ $cantidadGuardada pago(s) guardado(s)")
-        }
+        return cantidadGuardada
     }
 
     private fun collectLines(node: AccessibilityNodeInfo?, out: MutableList<String>) {
@@ -328,14 +336,10 @@ class ZasAutomatorService : AccessibilityService() {
 
     private fun hacerSwipeParaActualizar() {
         val metrics = resources.displayMetrics
-        val x = metrics.widthPixels / 2f
+        val x      = metrics.widthPixels / 2f
         val startY = metrics.heightPixels * 0.35f
         val endY   = metrics.heightPixels * 0.75f
-
-        val path = Path()
-        path.moveTo(x, startY)
-        path.lineTo(x, endY)
-
+        val path   = Path().apply { moveTo(x, startY); lineTo(x, endY) }
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 400))
             .build()
@@ -344,7 +348,7 @@ class ZasAutomatorService : AccessibilityService() {
 
     // ─── Helpers de nodos ─────────────────────────────────────────────────────
 
-    /** Busca por texto o contentDescription, sube hasta 5 padres para el click */
+    /** Intenta hacer clic buscando por texto/contentDescription, normalizado y sin tildes. */
     private fun clickByLabels(root: AccessibilityNodeInfo, vararg labels: String): Boolean {
         for (label in labels) {
             val node = findLabel(root, label)
@@ -361,7 +365,7 @@ class ZasAutomatorService : AccessibilityService() {
         return false
     }
 
-    /** Sube hasta 5 niveles buscando un nodo clickable */
+    /** Sube hasta 5 niveles buscando un padre clickable antes de forzar el click directo. */
     private fun performClick(node: AccessibilityNodeInfo): Boolean {
         var cur: AccessibilityNodeInfo? = node
         for (d in 0 until 5) {
@@ -371,6 +375,7 @@ class ZasAutomatorService : AccessibilityService() {
         return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
     }
 
+    /** Busca un nodo cuyo texto, contentDescription o hint contenga el label (normalizado). */
     private fun findLabel(n: AccessibilityNodeInfo?, label: String): AccessibilityNodeInfo? {
         if (n == null) return null
         if (matchesText(n, label)) return n
@@ -383,13 +388,61 @@ class ZasAutomatorService : AccessibilityService() {
 
     private fun findByContentDesc(n: AccessibilityNodeInfo?, desc: String): AccessibilityNodeInfo? {
         if (n == null) return null
-        val cd = n.contentDescription?.toString() ?: ""
-        if (cn(cd, desc)) return n
+        if (cn(n.contentDescription?.toString() ?: "", desc)) return n
         for (i in 0 until n.childCount) {
             val f = findByContentDesc(n.getChild(i), desc)
             if (f != null) return f
         }
         return null
+    }
+
+    /** Busca un nodo clickable/focusable que contenga alguna de las keywords. */
+    private fun findClickableNodeByKeywords(root: AccessibilityNodeInfo?, vararg kws: String): AccessibilityNodeInfo? {
+        if (root == null) return null
+        if (matchesAny(root, *kws) && (root.isClickable || root.isFocusable)) return root
+        for (i in 0 until root.childCount) {
+            val f = findClickableNodeByKeywords(root.getChild(i), *kws)
+            if (f != null) return f
+        }
+        return null
+    }
+
+    /** Busca un nodo por su nombre de clase exacto. */
+    private fun findClass(n: AccessibilityNodeInfo?, cls: String): AccessibilityNodeInfo? {
+        if (n == null) return null
+        if (safe(n.className) == cls) return n
+        for (i in 0 until n.childCount) {
+            val f = findClass(n.getChild(i), cls)
+            if (f != null) return f
+        }
+        return null
+    }
+
+    /** Recoge todos los EditText ordenados por posición vertical. */
+    private fun collectEditableFields(root: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
+        val fields = mutableListOf<AccessibilityNodeInfo>()
+        findEditTexts(root, fields)
+        fields.sortBy { getBounds(it).top }
+        return fields
+    }
+
+    /** Busca un EditText cuyo label/hint/id contenga alguna de las keywords. */
+    private fun findFieldByKeywords(root: AccessibilityNodeInfo, vararg kws: String): AccessibilityNodeInfo? {
+        for (f in collectEditableFields(root)) {
+            if (matchesAny(f, *kws)) return f
+            if (matchesAny(f.parent, *kws)) return f
+        }
+        return null
+    }
+
+    /** Hace clic en el nodo clickable número [index] contando desde la parte inferior de pantalla. */
+    private fun clickBottom(root: AccessibilityNodeInfo, index: Int): Boolean {
+        val clickables = mutableListOf<AccessibilityNodeInfo>()
+        findClickable(root, clickables)
+        val minTop = (resources.displayMetrics.heightPixels * 0.72f).toInt()
+        val bottom = clickables.filter { getBounds(it).top >= minTop }
+            .sortedWith(compareBy({ getBounds(it).top }, { getBounds(it).left }))
+        return bottom.size > index && performClick(bottom[index])
     }
 
     private fun findEditTexts(node: AccessibilityNodeInfo?, out: MutableList<AccessibilityNodeInfo>) {
@@ -404,16 +457,44 @@ class ZasAutomatorService : AccessibilityService() {
         for (i in 0 until node.childCount) findClickable(node.getChild(i), out)
     }
 
-    private fun matchesText(n: AccessibilityNodeInfo, kw: String): Boolean {
-        return cn(n.text?.toString() ?: "", kw) ||
-               cn(n.contentDescription?.toString() ?: "", kw)
+    private fun findScrollable(n: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (n == null) return null
+        if (n.isScrollable) return n
+        for (i in 0 until n.childCount) {
+            val f = findScrollable(n.getChild(i))
+            if (f != null) return f
+        }
+        return null
+    }
+
+    /** Comprueba texto, contentDescription, hint (API 26+) e ID de recurso. */
+    private fun matchesText(n: AccessibilityNodeInfo, kw: String): Boolean =
+        cn(safe(n.text), kw) ||
+        cn(safe(n.contentDescription), kw) ||
+        cn(getHint(n), kw)
+
+    /** True si el nodo cumple alguna keyword en texto, contentDesc, hint o viewId. */
+    private fun matchesAny(n: AccessibilityNodeInfo?, vararg kws: String): Boolean {
+        if (n == null) return false
+        for (kw in kws) {
+            if (matchesText(n, kw) || cn(safe(n.viewIdResourceName), kw)) return true
+        }
+        return false
     }
 
     private fun cn(src: String, needle: String): Boolean = norm(src).contains(norm(needle))
+
     private fun norm(v: String) = v.lowercase()
         .replace("á","a").replace("é","e").replace("í","i")
         .replace("ó","o").replace("ú","u").replace("ñ","n")
         .replace("\\s+".toRegex(), " ").trim()
+
+    private fun safe(v: CharSequence?): String = v?.toString() ?: ""
+
+    private fun getHint(n: AccessibilityNodeInfo?): String {
+        if (n == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return ""
+        return safe(n.hintText)
+    }
 
     private fun getBounds(n: AccessibilityNodeInfo): Rect {
         val r = Rect(); n.getBoundsInScreen(r); return r
