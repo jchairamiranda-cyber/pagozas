@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">PagoZas Automator</string>
+    <string name="accessibility_service_description">Servicio de automatización para leer y guardar pagos desde la aplicación externa.</string>
+</resources>

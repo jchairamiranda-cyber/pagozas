@@ -1,0 +1,40 @@
+name: Android CI Build
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+  # Permite ejecutar este flujo de trabajo manualmente desde la pestaña Actions
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout del código
+      uses: actions/checkout@v4
+
+    - name: Configurar Java JDK 17
+      uses: actions/setup-java@v3
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+
+    - name: Otorgar permisos de ejecución a gradlew
+      # Este paso asume que subiste el archivo gradlew a tu repositorio.
+      # Si abres el proyecto en Android Studio antes de subirlo, este archivo se creará automáticamente.
+      run: chmod +x gradlew
+
+    - name: Compilar el APK (Debug)
+      # Genera el archivo APK que podrás instalar en tu teléfono
+      run: ./gradlew assembleDebug
+
+    - name: Subir APK como Artefacto
+      uses: actions/upload-artifact@v4
+      with:
+        name: pagozas-app-debug
+        path: app/build/outputs/apk/debug/app-debug.apk
