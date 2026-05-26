@@ -88,7 +88,7 @@ class ZasAutomatorService : AccessibilityService() {
         state = State.CLICKING_INGRESAR
         showStatus("Iniciando... abriendo ZA\$")
         launchZas()
-        scheduleRetry(1500L)
+        scheduleRetry(4000L) // esperar 4s a que cargue la app antes de presionar Ingresar
     }
 
     private fun launchZas() {
@@ -152,14 +152,7 @@ class ZasAutomatorService : AccessibilityService() {
     // ─── PASO 1: Hacer clic en "Ingresar" ────────────────────────────────────
 
     private fun handleIngresar(root: AccessibilityNodeInfo) {
-        // Primero verificar que el QR ya se cargó en pantalla
-        if (!isLoginQrVisible(root)) {
-            showStatus("Esperando que cargue el QR...")
-            scheduleRetry(800L)
-            return
-        }
-        // QR visible → ahora sí presionar el botón Ingresar que está debajo
-        showStatus("QR cargado — presionando Ingresar...")
+        showStatus("Presionando Ingresar...")
         if (clickByLabels(root, "Ingresar", "Entrar", "Login", "Acceder")) {
             advance(State.FILLING_PIN, 1200L, "Ingresar ✓ — esperando PIN...")
         } else {
@@ -172,17 +165,6 @@ class ZasAutomatorService : AccessibilityService() {
                 scheduleRetry(800L)
             }
         }
-    }
-
-    /**
-     * True si el QR de la pantalla de login ya cargó.
-     * Lo detecta por los textos que aparecen junto al QR, no por la imagen en sí.
-     */
-    private fun isLoginQrVisible(root: AccessibilityNodeInfo): Boolean {
-        return findLabel(root, "Pagar a") != null
-            || findLabel(root, "Vencimiento del QR") != null
-            || findLabel(root, "Cuenta que recibirá") != null
-            || findLabel(root, "a la cuenta") != null
     }
 
     // ─── PASO 2: Rellenar PIN ─────────────────────────────────────────────────
