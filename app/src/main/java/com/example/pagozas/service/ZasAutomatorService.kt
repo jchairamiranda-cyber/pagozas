@@ -86,9 +86,12 @@ class ZasAutomatorService : AccessibilityService() {
         if (!isRunning) return
         pinAttempts = 0
         state = State.CLICKING_INGRESAR
-        showStatus("Iniciando... abriendo ZA\$")
+        // Bloquear CUALQUIER evento de accesibilidad durante 9s exactos.
+        // Sin esto, onAccessibilityEvent dispara process() ni bien aparece la pantalla.
+        nextActionAtMs = System.currentTimeMillis() + 9000L
+        showStatus("Abriendo ZA\$ — esperando 9s...")
         launchZas()
-        scheduleRetry(8000L) // esperar 8s a que cargue la app antes de presionar Ingresar
+        scheduleRetry(9000L)
     }
 
     private fun launchZas() {
