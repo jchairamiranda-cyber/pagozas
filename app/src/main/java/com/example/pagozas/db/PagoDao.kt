@@ -13,4 +13,10 @@ interface PagoDao {
 
     @Query("SELECT * FROM pagos ORDER BY timestamp DESC")
     fun getAllPagos(): Flow<List<Pago>>
+
+    @Query("DELETE FROM pagos")
+    suspend fun deleteAll()
+
+    @Query("SELECT COUNT(*) FROM pagos")
+    fun count(): Flow<Int>
 }
