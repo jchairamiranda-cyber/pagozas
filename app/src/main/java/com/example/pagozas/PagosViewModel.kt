@@ -13,7 +13,7 @@ class PagosViewModel(app: Application) : AndroidViewModel(app) {
     private val dao = PagoZasDatabase.getDatabase(app).pagoDao()
 
     val pagos = dao.getAllPagos()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     fun clearAll() {
         viewModelScope.launch { dao.deleteAll() }

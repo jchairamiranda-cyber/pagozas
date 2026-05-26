@@ -21,9 +21,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.TextView
 import com.example.pagozas.db.Pago
 import com.example.pagozas.db.PagoZasDatabase
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -47,7 +45,6 @@ class ZasAutomatorService : AccessibilityService() {
 
     private var state = State.IDLE
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val scope = CoroutineScope(Dispatchers.IO)
 
     // Referencias EVT seguidas de letras y/o números (EVTA63825173, EVT6864GJFB63, etc.)
     private val PAT_CODE  = Pattern.compile("EVT[A-Z0-9]{4,}")
@@ -291,14 +288,20 @@ class ZasAutomatorService : AccessibilityService() {
             return
         }
 
-        // 1. Escanear primero — extraer referencias EVTA + monto
+        // 1. Escanear primero — extraer referencias EVT + monto
+        val lines = mutableListOf<String>()
+        collectLines(root, lines)
+        val evtLines = lines.filter { it.contains("EVT") }
+        Log.d(TAG, "Líneas totales: ${lines.size}, con EVT: ${evtLines.size}")
+        showStatus("Escaneando... ${lines.size} líneas, ${evtLines.size} con EVT")
+
         val nuevas = extraerDatos(root)
 
         // 2. Mostrar resultado del escaneo
         if (nuevas > 0) {
-            showStatus("✓ $nuevas nueva(s) referencia(s) guardada(s)")
+            showStatus("✓ $nuevas referencia(s) nuevas guardadas")
         } else {
-            showStatus("Sin nuevas referencias — actualizando...")
+            showStatus("Sin nuevas — total EVT en pantalla: ${evtLines.size}")
         }
 
         // 3. Recién después de escanear → hacer swipe para actualizar la lista
@@ -346,24 +349,31 @@ class ZasAutomatorService : AccessibilityService() {
 
     private fun collectLines(node: AccessibilityNodeInfo?, out: MutableList<String>) {
         if (node == null) return
-        val t = node.text
-        if (t != null && t.isNotEmpty()) {
-            for (line in t.toString().split("\n")) {
-                val trimmed = line.trim()
-                if (trimmed.isNotEmpty()) out.add(trimmed)
+        // Leer text y contentDescription (ZA$ puede usar cualquiera de los dos)
+        listOf(node.text, node.contentDescription).forEach { cs ->
+            if (cs != null && cs.isNotEmpty()) {
+                cs.toString().split("\n").forEach { line ->
+                    val t = line.trim()
+                    if (t.isNotEmpty() && !out.contains(t)) out.add(t)
+                }
             }
         }
         for (i in 0 until node.childCount) collectLines(node.getChild(i), out)
     }
 
     private fun guardarEnBD(codigo: String, monto: String) {
-        scope.launch {
-            val db = PagoZasDatabase.getDatabase(applicationContext)
-            val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault())
-            val pago = Pago(codigo = codigo, monto = monto, fecha = sdf.format(Date()))
-            db.pagoDao().insert(pago)
-            Log.d(TAG, "Guardado: $codigo → $monto")
-        }
+        Thread {
+            try {
+                val db  = PagoZasDatabase.getDatabase(applicationContext)
+                val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault())
+                val pago = Pago(codigo = codigo, monto = monto, fecha = sdf.format(Date()))
+                runBlocking { db.pagoDao().insert(pago) }
+                Log.d(TAG, "Guardado OK: $codigo → $monto")
+                mainHandler.post { showStatus("Guardado: $codigo $monto") }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error BD: ${e.message}")
+            }
+        }.start()
     }
 
     // ─── Gesto de swipe para actualizar ──────────────────────────────────────
