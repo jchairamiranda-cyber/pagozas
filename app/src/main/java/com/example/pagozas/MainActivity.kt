@@ -12,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -76,6 +77,12 @@ fun PagoZasApp() {
                     com.example.pagozas.service.ZasAutomatorService.isRunning = isRunning
                     if (isRunning) {
                         android.widget.Toast.makeText(context, "Automatización INICIADA", android.widget.Toast.LENGTH_SHORT).show()
+                        val launchIntent = context.packageManager.getLaunchIntentForPackage("bec.vdb.direct")
+                        if (launchIntent != null) {
+                            context.startActivity(launchIntent)
+                        } else {
+                            android.widget.Toast.makeText(context, "App ZA no encontrada. Ábrela manualmente.", android.widget.Toast.LENGTH_LONG).show()
+                        }
                     } else {
                         android.widget.Toast.makeText(context, "Automatización PAUSADA", android.widget.Toast.LENGTH_SHORT).show()
                     }
