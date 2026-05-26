@@ -88,7 +88,7 @@ class ZasAutomatorService : AccessibilityService() {
         state = State.CLICKING_INGRESAR
         showStatus("Iniciando... abriendo ZA\$")
         launchZas()
-        scheduleRetry(5000L) // esperar 5s a que cargue la app antes de presionar Ingresar
+        scheduleRetry(8000L) // esperar 8s a que cargue la app antes de presionar Ingresar
     }
 
     private fun launchZas() {
