@@ -8,5 +8,6 @@ data class Pago(
     @PrimaryKey val codigo: String,
     val monto: String,
     val fecha: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val enviado: Boolean = false
 )

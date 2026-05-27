@@ -19,6 +19,8 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.TextView
+import com.example.pagozas.EvetaClient
+import com.example.pagozas.PagozasConfig
 import com.example.pagozas.db.Pago
 import com.example.pagozas.db.PagoZasDatabase
 import kotlinx.coroutines.runBlocking
@@ -183,12 +185,13 @@ class ZasAutomatorService : AccessibilityService() {
         val editTexts = mutableListOf<AccessibilityNodeInfo>()
         findEditTexts(root, editTexts)
 
-        val pin = listOf("6", "8", "8", "0")
+        val pinStr  = PagozasConfig.pin(applicationContext)
+        val pinDigs = pinStr.map { it.toString() }
         if (editTexts.size >= 4) {
             showStatus("Ingresando PIN...")
             for (i in 0 until 4) {
                 val args = Bundle()
-                args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pin[i])
+                args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pinDigs.getOrElse(i) { "0" })
                 editTexts[i].performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
                 Thread.sleep(80)
             }
@@ -199,7 +202,7 @@ class ZasAutomatorService : AccessibilityService() {
             // Campo único de PIN
             showStatus("Ingresando PIN en campo único...")
             val args = Bundle()
-            args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "6880")
+            args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pinStr)
             editTexts[0].performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
             Thread.sleep(300)
             performClick(continuar)
@@ -364,12 +367,26 @@ class ZasAutomatorService : AccessibilityService() {
     private fun guardarEnBD(codigo: String, monto: String) {
         Thread {
             try {
-                val db  = PagoZasDatabase.getDatabase(applicationContext)
-                val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault())
-                val pago = Pago(codigo = codigo, monto = monto, fecha = sdf.format(Date()))
-                runBlocking { db.pagoDao().insert(pago) }
-                Log.d(TAG, "Guardado OK: $codigo → $monto")
-                mainHandler.post { showStatus("Guardado: $codigo $monto") }
+                val db    = PagoZasDatabase.getDatabase(applicationContext)
+                val sdf   = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault())
+                val fecha = sdf.format(Date())
+                val pago  = Pago(codigo = codigo, monto = monto, fecha = fecha)
+                val rowId = runBlocking { db.pagoDao().insert(pago) }
+                if (rowId > 0) {
+                    Log.d(TAG, "Nuevo guardado: $codigo → $monto")
+                    mainHandler.post { showStatus("Nuevo: $codigo $monto") }
+                    val enviado = EvetaClient.sendPayment(applicationContext, codigo, monto, fecha)
+                    if (enviado) {
+                        runBlocking { db.pagoDao().marcarEnviado(codigo) }
+                        Log.d(TAG, "Enviado al backend: $codigo")
+                        mainHandler.post { showStatus("Enviado ✓ $codigo") }
+                    } else {
+                        Log.w(TAG, "No enviado (reintento manual): $codigo")
+                        mainHandler.post { showStatus("Guardado (sin enviar): $codigo") }
+                    }
+                } else {
+                    Log.d(TAG, "Duplicado ignorado: $codigo")
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error BD: ${e.message}")
             }

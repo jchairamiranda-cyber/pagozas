@@ -10,7 +10,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,6 +21,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,7 +52,8 @@ fun PagoZasApp(vm: PagosViewModel) {
     val context = LocalContext.current
     val pagos by vm.pagos.collectAsState()
     var isRunning by remember { mutableStateOf(ZasAutomatorService.isRunning) }
-    var showClearDialog by remember { mutableStateOf(false) }
+    var showClearDialog  by remember { mutableStateOf(false) }
+    var showConfigDialog by remember { mutableStateOf(false) }
 
     if (showClearDialog) {
         AlertDialog(
@@ -64,6 +71,10 @@ fun PagoZasApp(vm: PagosViewModel) {
         )
     }
 
+    if (showConfigDialog) {
+        ConfigDialog(onDismiss = { showConfigDialog = false })
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -73,6 +84,9 @@ fun PagoZasApp(vm: PagosViewModel) {
                     titleContentColor = Color.White
                 ),
                 actions = {
+                    TextButton(onClick = { showConfigDialog = true }) {
+                        Text("Config", color = Color.White, fontSize = 13.sp)
+                    }
                     if (pagos.isNotEmpty()) {
                         TextButton(onClick = { showClearDialog = true }) {
                             Text("Borrar", color = Color.White, fontSize = 13.sp)
@@ -182,28 +196,27 @@ fun PagoItem(numero: Int, pago: Pago) {
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Número
             Text(
                 text = "$numero",
                 fontSize = 13.sp,
                 color = Color.Gray,
                 modifier = Modifier.width(28.dp)
             )
-            // Referencia + fecha
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = pago.codigo,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    color = Color(0xFF1A1A1A)
-                )
-                Text(
-                    text = pago.fecha,
-                    fontSize = 11.sp,
-                    color = Color.Gray
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = pago.codigo,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = Color(0xFF1A1A1A)
+                    )
+                    if (pago.enviado) {
+                        Spacer(Modifier.width(6.dp))
+                        Text("✓", fontSize = 12.sp, color = Color(0xFF388E3C))
+                    }
+                }
+                Text(text = pago.fecha, fontSize = 11.sp, color = Color.Gray)
             }
-            // Monto
             Text(
                 text = pago.monto,
                 fontWeight = FontWeight.Bold,
@@ -214,4 +227,81 @@ fun PagoItem(numero: Int, pago: Pago) {
             )
         }
     }
+}
+
+@Composable
+fun ConfigDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var backendUrl by remember { mutableStateOf(PagozasConfig.backendUrl(context)) }
+    var token      by remember { mutableStateOf(PagozasConfig.token(context)) }
+    var workerId   by remember { mutableStateOf(PagozasConfig.workerId(context)) }
+    var provider   by remember { mutableStateOf(PagozasConfig.provider(context)) }
+    var pin        by remember { mutableStateOf(PagozasConfig.pin(context)) }
+    var showToken  by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Configuración", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = backendUrl,
+                    onValueChange = { backendUrl = it },
+                    label = { Text("Backend URL") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = token,
+                    onValueChange = { token = it },
+                    label = { Text("Token") },
+                    singleLine = true,
+                    visualTransformation = if (showToken) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        TextButton(onClick = { showToken = !showToken }) {
+                            Text(if (showToken) "Ocultar" else "Ver", fontSize = 11.sp)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = workerId,
+                    onValueChange = { workerId = it },
+                    label = { Text("Worker ID") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = provider,
+                    onValueChange = { provider = it },
+                    label = { Text("Provider") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = pin,
+                    onValueChange = { pin = it },
+                    label = { Text("PIN") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                PagozasConfig.save(context, backendUrl, token, workerId, provider, pin)
+                onDismiss()
+            }) {
+                Text("Guardar", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
 }
